@@ -38,9 +38,18 @@ public final class ClockSecondsModule extends XposedModule {
     private static final String MEMORY_INFO_SETTING =
             "display_memory_information_recent_task";
     private static final String MEMORY_INFO_COMPAT_SETTING = "allow_memory_info_display";
+    private static final String MEMORY_INFO_CATEGORY_KEY =
+            "category_display_information_recent_task";
+    private static final String NETWORK_SPEED_INTERVAL_SETTING =
+            "coloros_status_bar_network_speed_refresh_interval_ms";
+    private static final int DEFAULT_NETWORK_SPEED_INTERVAL_MS = 4000;
     private static final String HOOK_DEADLINE_CHECK_ID = "clock-seconds-deadline-check";
     private static final String HOOK_EXPIRY_ID = "clock-seconds-expiry";
+    private static final String HOOK_NETWORK_SPEED_INTERVAL_ID = "network-speed-refresh-interval";
     private static final String HOOK_LAUNCHER_MEMORY_INFO_ID = "launcher-memory-info-availability";
+    private static final String HOOK_LAUNCHER_MEMORY_INFO_UI_ID = "launcher-memory-info-ui";
+    private static final String HOOK_LAUNCHER_MEMORY_INFO_SWITCH_ID = "launcher-memory-info-switch";
+    private static final String HOOK_LAUNCHER_MEMORY_INFO_CATEGORY_ID = "launcher-memory-info-category";
     private static final String HOOK_SETTINGS_STATE_ID = "clock-seconds-settings-state";
     private static final String HOOK_SETTINGS_HINT_ID = "clock-seconds-settings-hint";
     private static final String HOOK_SETTINGS_ASSIGNMENT_ID = "clock-seconds-settings-assignment";
@@ -81,6 +90,14 @@ public final class ClockSecondsModule extends XposedModule {
             Method scheduleExpiry =
                     controllerClass.getDeclaredMethod("scheduleExpiryLocked", int.class, long.class);
             Field lastAppliedMode = controllerClass.getField("lastAppliedMode");
+            Class<?> networkSpeedControllerClass = Class.forName(
+                    "com.oplus.systemui.statusbar.phone.netspeed.OplusNetworkSpeedControllerExImpl",
+                    false,
+                    classLoader);
+            Method postNetworkSpeedUpdate = networkSpeedControllerClass.getDeclaredMethod(
+                    "postUpdateNetworkSpeedDelay", long.class);
+            Field networkSpeedContext = networkSpeedControllerClass.getDeclaredField("context");
+            networkSpeedContext.setAccessible(true);
 
             hook(isDeadlineActive)
                     .setId(HOOK_DEADLINE_CHECK_ID)
@@ -97,6 +114,25 @@ public final class ClockSecondsModule extends XposedModule {
                             return null;
                         }
                         return chain.proceed();
+                    });
+
+            hook(postNetworkSpeedUpdate)
+                    .setId(HOOK_NETWORK_SPEED_INTERVAL_ID)
+                    .setExceptionMode(ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        long requestedDelay = ((Number) chain.getArg(0)).longValue();
+                        if (requestedDelay <= 0L) {
+                            return chain.proceed();
+                        }
+                        Context context = (Context) networkSpeedContext.get(chain.getThisObject());
+                        int interval = Settings.Secure.getInt(
+                                context.getContentResolver(),
+                                NETWORK_SPEED_INTERVAL_SETTING,
+                                DEFAULT_NETWORK_SPEED_INTERVAL_MS);
+                        if (!isValidNetworkSpeedInterval(interval)) {
+                            interval = DEFAULT_NETWORK_SPEED_INTERVAL_MS;
+                        }
+                        return chain.proceed(new Object[]{(long) interval});
                     });
 
             log(Log.INFO, TAG, "Installed ColorOS 17 clock-seconds hooks");
@@ -246,25 +282,116 @@ public final class ClockSecondsModule extends XposedModule {
     private void installLauncherMemoryInfoHook(ClassLoader classLoader) {
         try {
             Class<?> memoryInfoManagerClass = Class.forName("fp.e", false, classLoader);
-            Method updateMemoryInfoSwitch = memoryInfoManagerClass.getDeclaredMethod("i");
+            Method updateMemoryInfoState = memoryInfoManagerClass.getDeclaredMethod("i");
+            Method isMemoryInfoAllowed = memoryInfoManagerClass.getDeclaredMethod("g");
+            Method isMemoryInfoEnabled = memoryInfoManagerClass.getDeclaredMethod("h");
             Field memoryInfoAllowed = memoryInfoManagerClass.getField("f33271m");
             Field memoryInfoEnabled = memoryInfoManagerClass.getField("f33262d");
             Field contextField = memoryInfoManagerClass.getField("f33260b");
             memoryInfoAllowed.setAccessible(true);
 
-            hook(updateMemoryInfoSwitch)
+            Class<?> preferenceClass = Class.forName(
+                    "androidx.preference.Preference", false, classLoader);
+            Class<?> preferenceGroupClass = Class.forName(
+                    "androidx.preference.PreferenceGroup", false, classLoader);
+            Class<?> lockSettingFragmentClass = Class.forName(
+                    "com.oplus.quickstep.locksetting.ui.LockSettingFragment", false, classLoader);
+            Method removePreference = preferenceGroupClass.getDeclaredMethod("f", preferenceClass);
+            Method onCreateView = lockSettingFragmentClass.getDeclaredMethod(
+                    "onCreateView",
+                    Class.forName("android.view.LayoutInflater", false, classLoader),
+                    Class.forName("android.view.ViewGroup", false, classLoader),
+                    Class.forName("android.os.Bundle", false, classLoader));
+            Method fragmentUpdateMemoryInfoSwitch = lockSettingFragmentClass.getDeclaredMethod(
+                    "updateMemoryInfoSwitch", boolean.class);
+            Field memoryInfoSwitch = lockSettingFragmentClass.getDeclaredField("mDisplayMemoryInforSwitch");
+            Field memoryInfoCategory = lockSettingFragmentClass.getDeclaredField("mDisplayInformationCategory");
+            Field fragmentContext = lockSettingFragmentClass.getDeclaredField("mContext");
+            memoryInfoSwitch.setAccessible(true);
+            memoryInfoCategory.setAccessible(true);
+            fragmentContext.setAccessible(true);
+
+            hook(updateMemoryInfoState)
                     .setId(HOOK_LAUNCHER_MEMORY_INFO_ID)
                     .setExceptionMode(ExceptionMode.PROTECTIVE)
                     .intercept(chain -> {
                         Object result = chain.proceed();
                         Object manager = chain.getThisObject();
                         Context context = (Context) contextField.get(manager);
-                        memoryInfoAllowed.setBoolean(manager, true);
+                        try {
+                            memoryInfoAllowed.setBoolean(manager, true);
+                        } catch (IllegalAccessException error) {
+                            log(Log.WARN, TAG, "Could not update Launcher memory capability field", error);
+                        }
                         Settings.Secure.putInt(
                                 context.getContentResolver(), MEMORY_INFO_COMPAT_SETTING, 1);
                         boolean enabled = Settings.Secure.getInt(
                                 context.getContentResolver(), MEMORY_INFO_SETTING, 0) == 1;
                         memoryInfoEnabled.setBoolean(manager, enabled);
+                        return result;
+                    });
+
+            hook(isMemoryInfoAllowed)
+                    .setId(HOOK_LAUNCHER_MEMORY_INFO_ID + "-capability")
+                    .setExceptionMode(ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> true);
+
+            hook(isMemoryInfoEnabled)
+                    .setId(HOOK_LAUNCHER_MEMORY_INFO_ID + "-enabled")
+                    .setExceptionMode(ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        Object manager = chain.getThisObject();
+                        Context context = (Context) contextField.get(manager);
+                        return Settings.Secure.getInt(
+                                context.getContentResolver(), MEMORY_INFO_SETTING, 0) == 1;
+                    });
+
+            hook(fragmentUpdateMemoryInfoSwitch)
+                    .setId(HOOK_LAUNCHER_MEMORY_INFO_SWITCH_ID)
+                    .setExceptionMode(ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        Context context = (Context) fragmentContext.get(chain.getThisObject());
+                        if (context == null) {
+                            return chain.proceed();
+                        }
+                        boolean enabled = Settings.Secure.getInt(
+                                context.getContentResolver(), MEMORY_INFO_SETTING, 0) == 1;
+                        return chain.proceed(new Object[]{enabled});
+                    });
+
+            hook(removePreference)
+                    .setId(HOOK_LAUNCHER_MEMORY_INFO_CATEGORY_ID)
+                    .setExceptionMode(ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        Object preference = chain.getArg(0);
+                        if (preference != null && MEMORY_INFO_CATEGORY_KEY.equals(
+                                preferenceClass.getMethod("getKey").invoke(preference))) {
+                            return false;
+                        }
+                        return chain.proceed();
+                    });
+
+            hook(onCreateView)
+                    .setId(HOOK_LAUNCHER_MEMORY_INFO_UI_ID)
+                    .setExceptionMode(ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        Object result = chain.proceed();
+                        Object fragment = chain.getThisObject();
+                        Object switchPreference = memoryInfoSwitch.get(fragment);
+                        Object category = memoryInfoCategory.get(fragment);
+                        Context context = (Context) fragmentContext.get(fragment);
+                        boolean enabled = context != null && Settings.Secure.getInt(
+                                context.getContentResolver(), MEMORY_INFO_SETTING, 0) == 1;
+                        if (switchPreference != null) {
+                            switchPreference.getClass().getMethod("setVisible", boolean.class)
+                                    .invoke(switchPreference, true);
+                            switchPreference.getClass().getMethod("setChecked", boolean.class)
+                                    .invoke(switchPreference, enabled);
+                        }
+                        if (category != null) {
+                            category.getClass().getMethod("setVisible", boolean.class)
+                                    .invoke(category, true);
+                        }
                         return result;
                     });
 
@@ -298,5 +425,9 @@ public final class ClockSecondsModule extends XposedModule {
         SpannableString formatted = new SpannableString(formattedText);
         formatted.setSpan(new StrikethroughSpan(), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         return formatted;
+    }
+
+    private static boolean isValidNetworkSpeedInterval(int interval) {
+        return interval == 500 || (interval >= 1000 && interval <= 5000 && interval % 1000 == 0);
     }
 }

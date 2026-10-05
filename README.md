@@ -1,6 +1,6 @@
 # OPPO/一加/真我 ColorOS 17 状态栏时钟显秒
 
-基于 libxposed API 102 的 LSPosed 模块，APK 包名为 `io.github.coolzyd9107.coloros17clockseconds`。保持 ColorOS 状态栏时钟的显秒状态，不让系统五分钟后自动关闭；用户仍可在设置或长按状态栏时钟关闭显秒。
+基于 libxposed API 102 的 LSPosed 模块，APK 包名为 `io.github.coolzyd9107.coloros17clockseconds`。保持 ColorOS 状态栏时钟的显秒状态，不让系统五分钟后自动关闭；用户仍可在设置或长按状态栏时钟关闭显秒。可从 LSPosed 管理器打开配置界面，选择网速刷新间隔并请求重启作用域进程。
 
 ## 工作方式
 
@@ -39,7 +39,7 @@ Keystore 保存在被 Git 忽略的 `.secrets` 目录中，不要提交或公开
 
 ## 启用
 
-安装 APK 后，在 LSPosed 管理器中启用模块，并确认作用域包含 `System UI (com.android.systemui)`、`Settings (com.android.settings)` 和 `Launcher (com.android.launcher)`，然后重启对应进程或设备使 hook 生效。模块不需要单独的启动器界面，也不申请额外权限。
+安装 APK 后，在 LSPosed 管理器中启用模块，并确认作用域包含 `System UI (com.android.systemui)`、`Settings (com.android.settings)` 和 `Launcher (com.android.launcher)`，然后重启对应进程或设备使 hook 生效。配置 Activity 使用 Android `INFO` 启动类别，不会显示桌面图标。网速间隔保存和作用域进程重启均需要通过 Root 管理器授权。
 
 ## 兼容性
 

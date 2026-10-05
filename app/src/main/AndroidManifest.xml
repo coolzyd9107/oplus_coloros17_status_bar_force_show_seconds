@@ -4,5 +4,17 @@
         android:allowBackup="false"
         android:description="@string/module_description"
         android:label="@string/module_name"
-        android:supportsRtl="true" />
+        android:name=".ColorOSModuleApplication"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.ColorOSClockSeconds">
+        <activity
+            android:name=".settings.ModuleSettingsActivity"
+            android:exported="true"
+            android:label="@string/module_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.INFO" />
+            </intent-filter>
+        </activity>
+    </application>
 </manifest>

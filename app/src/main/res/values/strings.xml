@@ -2,4 +2,27 @@
 <resources>
     <string name="module_name">ColorOS 状态栏时钟显秒</string>
     <string name="module_description">保持 ColorOS 状态栏时钟显秒，允许通过系统设置或长按时钟关闭。</string>
+    <string name="scope_system_ui">系统界面</string>
+    <string name="scope_settings">设置</string>
+    <string name="scope_launcher">桌面与最近任务</string>
+    <string name="interval_saved">刷新间隔已保存</string>
+    <string name="settings_title">状态栏工具</string>
+    <string name="restart_section_title">作用域进程</string>
+    <string name="restart_section_summary">结束作用域进程但不设置 stopped 状态；系统组件自动重建，其他应用在下次启动时重建。</string>
+    <string name="restart_scoped_apps">重启作用域进程</string>
+    <string name="restart_confirm_title">重启作用域进程？</string>
+    <string name="restart_confirm_message">将向 System UI、设置和桌面进程发送终止信号，不会使用 force-stop。System UI 会由系统自动重建，桌面和设置会在系统需要时重新启动。</string>
+    <string name="restart_confirm_action">重启</string>
+    <string name="cancel">取消</string>
+    <string name="root_restart_sent">已发送重启信号</string>
+    <string name="root_action_failed">Root 操作失败，请检查 Root 授权</string>
+    <string name="network_interval_title">网速刷新间隔</string>
+    <string name="network_interval_summary">较短间隔会更频繁地采样状态栏网速。</string>
+    <string name="network_interval_root_note">修改需要 Root 权限</string>
+    <string name="interval_half_second">0.5 秒</string>
+    <string name="interval_one_second">1 秒</string>
+    <string name="interval_two_seconds">2 秒</string>
+    <string name="interval_three_seconds">3 秒</string>
+    <string name="interval_four_seconds">4 秒</string>
+    <string name="interval_five_seconds">5 秒</string>
 </resources>

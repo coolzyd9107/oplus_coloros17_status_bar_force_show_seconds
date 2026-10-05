@@ -53,4 +53,5 @@ android {
 
 dependencies {
     compileOnly("io.github.libxposed:api:102.0.0")
+    implementation("com.google.android.material:material:1.14.0")
 }
