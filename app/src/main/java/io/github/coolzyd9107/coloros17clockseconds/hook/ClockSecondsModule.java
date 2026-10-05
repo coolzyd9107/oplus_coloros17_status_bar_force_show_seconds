@@ -306,10 +306,12 @@ public final class ClockSecondsModule extends XposedModule {
             Method updateMemoryInfoState = memoryInfoManagerClass.getDeclaredMethod("i");
             Method isMemoryInfoAllowed = memoryInfoManagerClass.getDeclaredMethod("g");
             Method isMemoryInfoEnabled = memoryInfoManagerClass.getDeclaredMethod("h");
+            Method getMemoryInfoManager = memoryInfoManagerClass.getDeclaredMethod("a", Context.class);
             Field memoryInfoAllowed = memoryInfoManagerClass.getField("f33271m");
             Field memoryInfoEnabled = memoryInfoManagerClass.getField("f33262d");
             Field contextField = memoryInfoManagerClass.getField("f33260b");
             memoryInfoAllowed.setAccessible(true);
+            getMemoryInfoManager.setAccessible(true);
 
             Class<?> preferenceClass = Class.forName(
                     "androidx.preference.Preference", false, classLoader);
@@ -319,6 +321,11 @@ public final class ClockSecondsModule extends XposedModule {
             Method setPreferenceVisible = preferenceClass.getMethod("setVisible", boolean.class);
             Class<?> lockSettingFragmentClass = Class.forName(
                     "com.oplus.quickstep.locksetting.ui.LockSettingFragment", false, classLoader);
+            Class<?> lockSettingActivityClass = Class.forName(
+                    "com.oplus.quickstep.locksetting.ui.LockSettingActivity", false, classLoader);
+            Class<?> clearAllPanelClass = Class.forName(
+                    "com.oplus.quickstep.views.OplusClearAllPanelView", false, classLoader);
+            Method updateMemoryPanel = clearAllPanelClass.getDeclaredMethod("B", boolean.class);
             Method removePreference = preferenceGroupClass.getDeclaredMethod("f", preferenceClass);
             Method addPreference = preferenceGroupClass.getDeclaredMethod("b", preferenceClass);
             Method getPreferenceParent = preferenceClass.getMethod("getParent");
@@ -327,6 +334,8 @@ public final class ClockSecondsModule extends XposedModule {
                     Class.forName("android.view.LayoutInflater", false, classLoader),
                     Class.forName("android.view.ViewGroup", false, classLoader),
                     Class.forName("android.os.Bundle", false, classLoader));
+            Method lockSettingActivityOnCreate = lockSettingActivityClass.getDeclaredMethod(
+                    "onCreate", Class.forName("android.os.Bundle", false, classLoader));
             Method getPreferenceScreen = lockSettingFragmentClass.getMethod("getPreferenceScreen");
             Method fragmentUpdateMemoryInfoSwitch = lockSettingFragmentClass.getDeclaredMethod(
                     "updateMemoryInfoSwitch", boolean.class);
@@ -391,6 +400,22 @@ public final class ClockSecondsModule extends XposedModule {
                                 context.getContentResolver(), MEMORY_INFO_SETTING, 0) == 1;
                     });
 
+            try {
+                hook(updateMemoryPanel)
+                        .setId(HOOK_LAUNCHER_MEMORY_INFO_ID + "-panel")
+                        .setExceptionMode(ExceptionMode.PROTECTIVE)
+                        .intercept(chain -> {
+                            Context context = ((android.view.View) chain.getThisObject()).getContext();
+                            Object manager = getMemoryInfoManager.invoke(null, context);
+                            boolean enabled = Settings.Secure.getInt(
+                                    context.getContentResolver(), MEMORY_INFO_SETTING, 0) == 1;
+                            memoryInfoEnabled.setBoolean(manager, enabled);
+                            return chain.proceed();
+                        });
+            } catch (Throwable error) {
+                log(Log.ERROR, TAG, "Failed to hook Launcher recent-task memory panel", error);
+            }
+
             hook(fragmentUpdateMemoryInfoSwitch)
                     .setId(HOOK_LAUNCHER_MEMORY_INFO_SWITCH_ID)
                     .setExceptionMode(ExceptionMode.PROTECTIVE)
@@ -454,6 +479,17 @@ public final class ClockSecondsModule extends XposedModule {
             } catch (Throwable error) {
                 log(Log.ERROR, TAG, "Failed to restore Launcher memory setting UI", error);
             }
+
+            hook(lockSettingActivityOnCreate)
+                    .setId(HOOK_LAUNCHER_MEMORY_INFO_UI_ID + "-activity")
+                    .setExceptionMode(ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        Object result = chain.proceed();
+                        Context context = (Context) chain.getThisObject();
+                        Settings.Secure.putLong(context.getContentResolver(),
+                                LAUNCHER_HOOK_TIMESTAMP_SETTING, System.currentTimeMillis());
+                        return result;
+                    });
 
             log(Log.INFO, TAG, "Restored Launcher recent-task memory information availability");
         } catch (Throwable error) {
