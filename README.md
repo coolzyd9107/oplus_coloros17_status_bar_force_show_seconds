@@ -1,10 +1,10 @@
 # OPPO/一加/真我 ColorOS 17 状态栏时钟显秒
 
-基于 libxposed API 102 的 LSPosed 模块。保持 ColorOS 状态栏时钟的显秒状态，不让系统五分钟后自动关闭；用户仍可在设置或长按状态栏时钟关闭显秒。
+基于 libxposed API 102 的 LSPosed 模块，APK 包名为 `io.github.coolzyd9107.coloros17clockseconds`。保持 ColorOS 状态栏时钟的显秒状态，不让系统五分钟后自动关闭；用户仍可在设置或长按状态栏时钟关闭显秒。
 
 ## 工作方式
 
-模块作用于 `com.android.systemui` 和 `com.android.settings`。ColorOS 17 使用 `ClockSecondsRepository` 保存显秒模式和截止时间：模式 `1` 表示用户已开启，模式 `0` 表示用户已关闭。SystemUI 中，模块在模式为 `1` 时让系统的五分钟有效性检查通过，并阻止状态栏时钟超时任务排队，不依赖人为延长截止时间；模式为 `0` 时不干预系统行为。Settings 中，模块让设置项根据实际开关模式显示状态，不修改用户选择开关时的系统写入逻辑。
+模块作用于 `com.android.systemui`、`com.android.settings` 和 `com.android.launcher`。ColorOS 17 使用 `ClockSecondsRepository` 保存显秒模式和截止时间：模式 `1` 表示用户已开启，模式 `0` 表示用户已关闭。SystemUI 中，模块在模式为 `1` 时让系统的五分钟有效性检查通过，并阻止状态栏时钟超时任务排队，不依赖人为延长截止时间；模式为 `0` 时不干预系统行为。Settings 中，模块让显秒设置项根据实际开关模式显示状态，并显示过期提示；Launcher 中恢复最近任务内存信息的设置和可用状态，仍由用户自行开关。
 
 ## 构建
 
@@ -39,7 +39,7 @@ Keystore 保存在被 Git 忽略的 `.secrets` 目录中，不要提交或公开
 
 ## 启用
 
-安装 APK 后，在 LSPosed 管理器中启用模块，并确认作用域包含 `System UI (com.android.systemui)` 和 `Settings (com.android.settings)`，然后重启 SystemUI 或设备使 hook 生效。模块不需要单独的启动器界面，也不申请额外权限。
+安装 APK 后，在 LSPosed 管理器中启用模块，并确认作用域包含 `System UI (com.android.systemui)`、`Settings (com.android.settings)` 和 `Launcher (com.android.launcher)`，然后重启对应进程或设备使 hook 生效。模块不需要单独的启动器界面，也不申请额外权限。
 
 ## 兼容性
 

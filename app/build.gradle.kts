@@ -14,11 +14,11 @@ val hasReleaseSigning = listOf(
 ).all { !it.isNullOrBlank() }
 
 android {
-    namespace = "com.coolzyd.coloros17clockseconds"
+    namespace = "io.github.coolzyd9107.coloros17clockseconds"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.coolzyd.coloros17clockseconds"
+        applicationId = "io.github.coolzyd9107.coloros17clockseconds"
         minSdk = 29
         targetSdk = 35
         versionCode = 1

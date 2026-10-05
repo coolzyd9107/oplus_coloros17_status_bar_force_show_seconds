@@ -1,5 +1,6 @@
-package com.coolzyd.coloros17clockseconds.hook;
+package io.github.coolzyd9107.coloros17clockseconds.hook;
 
+import android.content.Context;
 import android.content.ContentResolver;
 import android.provider.Settings;
 import android.text.SpannableString;
@@ -11,6 +12,10 @@ import android.widget.TextView;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -22,6 +27,7 @@ public final class ClockSecondsModule extends XposedModule {
     private static final String TAG = "ColorOSClockSeconds";
     private static final String SYSTEM_UI_PACKAGE = "com.android.systemui";
     private static final String SETTINGS_PACKAGE = "com.android.settings";
+    private static final String LAUNCHER_PACKAGE = "com.android.launcher";
     private static final String CLOCK_SECONDS_PREFERENCE_KEY =
             "oplus_status_bar_clock_seconds_mode";
     private static final String CONTROLLER_CLASS =
@@ -29,19 +35,30 @@ public final class ClockSecondsModule extends XposedModule {
     private static final String SETTINGS_CONTROLLER_CLASS =
             "com.oplus.settings.feature.notification.controller.ClockSecondsModePreferenceController";
     private static final String MODE_SETTING = "oplus_status_bar_clock_seconds_mode";
+    private static final String MEMORY_INFO_SETTING =
+            "display_memory_information_recent_task";
+    private static final String MEMORY_INFO_COMPAT_SETTING = "allow_memory_info_display";
     private static final String HOOK_DEADLINE_CHECK_ID = "clock-seconds-deadline-check";
     private static final String HOOK_EXPIRY_ID = "clock-seconds-expiry";
+    private static final String HOOK_LAUNCHER_MEMORY_INFO_ID = "launcher-memory-info-availability";
     private static final String HOOK_SETTINGS_STATE_ID = "clock-seconds-settings-state";
     private static final String HOOK_SETTINGS_HINT_ID = "clock-seconds-settings-hint";
     private static final String HOOK_SETTINGS_ASSIGNMENT_ID = "clock-seconds-settings-assignment";
-    private static final String HOOK_SETTINGS_OPTION_TITLE_ID = "clock-seconds-settings-option-title";
+    private static final String HOOK_SETTINGS_POPUP_LIST_ID = "clock-seconds-settings-popup-list";
+    private static final String HOOK_SETTINGS_DEFAULT_MENU_TITLE_ID =
+            "clock-seconds-settings-default-menu-title";
+    private static final String HOOK_SETTINGS_MIXED_MENU_TITLE_ID =
+            "clock-seconds-settings-mixed-menu-title";
+    private static final String HOOK_SETTINGS_HORIZONTAL_MENU_TITLE_ID =
+            "clock-seconds-settings-horizontal-menu-title";
     private static final int MODE_ENABLED = 1;
     private static final int SETTINGS_ENABLED_INDEX = 1;
-    private static final String FIVE_MINUTES_ITEM = "CLOCK_SECONDS_FIVE_MINUTES";
     private static final Pattern FIVE_MINUTES_PATTERN = Pattern.compile(
             "5\\s*(?:分钟|分|minutes?|mins?\\.?)", Pattern.CASE_INSENSITIVE);
     private static final String SETTINGS_HINT =
             "模块运行中：开启显秒后不会在 5 分钟后自动关闭；仍可通过本设置或长按时钟关闭。";
+    private final Set<Object> secondsMenuOptions =
+            Collections.newSetFromMap(new WeakHashMap<>());
 
     @Override
     public void onPackageLoaded(PackageLoadedParam param) {
@@ -50,6 +67,8 @@ public final class ClockSecondsModule extends XposedModule {
             installSystemUiHooks(param.getDefaultClassLoader());
         } else if (SETTINGS_PACKAGE.equals(packageName)) {
             installSettingsStateHook(param.getDefaultClassLoader());
+        } else if (LAUNCHER_PACKAGE.equals(packageName)) {
+            installLauncherMemoryInfoHook(param.getDefaultClassLoader());
         }
     }
 
@@ -97,6 +116,8 @@ public final class ClockSecondsModule extends XposedModule {
                     "displayPreference", preferenceScreenClass);
             Class<?> couiPreferenceClass =
                     Class.forName("com.coui.appcompat.preference.COUIPreference", false, classLoader);
+            Class<?> couiMenuPreferenceClass =
+                    Class.forName("com.coui.appcompat.preference.COUIMenuPreference", false, classLoader);
             Method setAssignment =
                     couiPreferenceClass.getDeclaredMethod("setAssignment", CharSequence.class);
             Method getPreferenceKey = couiPreferenceClass.getMethod("getKey");
@@ -105,33 +126,24 @@ public final class ClockSecondsModule extends XposedModule {
             contentResolver.setAccessible(true);
             preferenceField.setAccessible(true);
 
-            Class<?> choiceAdapterClass = Class.forName(
-                    "com.oplus.settings.feature.notification.controller.StatusIconBottomSheetChoiceListAdapter",
-                    false,
-                    classLoader);
-            Class<?> choiceViewHolderClass = Class.forName(
-                    "com.oplus.settings.feature.notification.controller.StatusIconBottomSheetChoiceListAdapter$ViewHolder",
-                    false,
-                    classLoader);
-            Class<?> statusIconClass = Class.forName(
-                    "com.oplus.settings.feature.notification.controller.StatusIconBottomSheetDialog$StatusIcon",
-                    false,
-                    classLoader);
-            Class<?> statusIconDialogItemClass = Class.forName(
-                    "com.oplus.settings.feature.notification.StatusIconDialogItem",
-                    false,
-                    classLoader);
-            Field boundStatusIcon = choiceViewHolderClass.getDeclaredField("mStatusIcon");
-            Field boundDialogItem = statusIconClass.getDeclaredField("mStatusIconDialogItem");
-            Field optionTitle = choiceViewHolderClass.getDeclaredField("itemText");
-            Field fiveMinutesItem = statusIconDialogItemClass.getDeclaredField(FIVE_MINUTES_ITEM);
-            boundStatusIcon.setAccessible(true);
-            boundDialogItem.setAccessible(true);
-            optionTitle.setAccessible(true);
-            fiveMinutesItem.setAccessible(true);
-            Object fiveMinutes = fiveMinutesItem.get(null);
-            Method bindChoice = choiceAdapterClass.getDeclaredMethod(
-                    "onBindViewHolder", choiceViewHolderClass, int.class);
+            Class<?> popupListItemClass = Class.forName(
+                    "com.coui.appcompat.poplist.PopupListItem", false, classLoader);
+            Method getPopupTitle = popupListItemClass.getMethod("getTitle");
+            Method setPopupList = couiMenuPreferenceClass.getDeclaredMethod(
+                    "setPopupList", ArrayList.class);
+            Class<?> mixedPopupListAdapterClass = Class.forName(
+                    "com.coui.appcompat.poplist.MixedPopupListAdapter", false, classLoader);
+            Method setMixedVerticalTitle = mixedPopupListAdapterClass.getDeclaredMethod(
+                    "setTitleForVertical", TextView.class, popupListItemClass, int.class);
+            Method setMixedHorizontalTitle = mixedPopupListAdapterClass.getDeclaredMethod(
+                    "setTitleForHorizontal", TextView.class, popupListItemClass);
+            Class<?> defaultAdapterClass = Class.forName(
+                    "com.coui.appcompat.poplist.DefaultAdapter", false, classLoader);
+            Method setDefaultTitle = defaultAdapterClass.getDeclaredMethod(
+                    "setTitle", TextView.class, popupListItemClass, int.class);
+            setMixedVerticalTitle.setAccessible(true);
+            setMixedHorizontalTitle.setAccessible(true);
+            setDefaultTitle.setAccessible(true);
 
             hook(getCheckedItem)
                     .setId(HOOK_SETTINGS_STATE_ID)
@@ -178,23 +190,94 @@ public final class ClockSecondsModule extends XposedModule {
                                 : chain.proceed(new Object[]{formatted});
                     });
 
-            hook(bindChoice)
-                    .setId(HOOK_SETTINGS_OPTION_TITLE_ID)
+            hook(setPopupList)
+                    .setId(HOOK_SETTINGS_POPUP_LIST_ID)
+                    .setExceptionMode(ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        Object menuPreference = chain.getThisObject();
+                        if (CLOCK_SECONDS_PREFERENCE_KEY.equals(
+                                getPreferenceKey.invoke(menuPreference))) {
+                            Object popupItems = chain.getArg(0);
+                            if (popupItems instanceof ArrayList) {
+                                for (Object item : (ArrayList<?>) popupItems) {
+                                    String title = (String) getPopupTitle.invoke(item);
+                                    if (title != null && FIVE_MINUTES_PATTERN.matcher(title).find()) {
+                                        secondsMenuOptions.add(item);
+                                    }
+                                }
+                            }
+                        }
+                        return chain.proceed();
+                    });
+
+            hook(setMixedVerticalTitle)
+                    .setId(HOOK_SETTINGS_MIXED_MENU_TITLE_ID)
                     .setExceptionMode(ExceptionMode.PROTECTIVE)
                     .intercept(chain -> {
                         Object result = chain.proceed();
-                        Object viewHolder = chain.getArg(0);
-                        Object statusIcon = boundStatusIcon.get(viewHolder);
-                        if (statusIcon != null && boundDialogItem.get(statusIcon) == fiveMinutes) {
-                            TextView title = (TextView) optionTitle.get(viewHolder);
-                            title.setText(formatPermanentDuration(title.getText()));
-                        }
+                        applyPermanentDurationToMenuTitle(chain.getArg(0), chain.getArg(1));
+                        return result;
+                    });
+
+            hook(setMixedHorizontalTitle)
+                    .setId(HOOK_SETTINGS_HORIZONTAL_MENU_TITLE_ID)
+                    .setExceptionMode(ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        Object result = chain.proceed();
+                        applyPermanentDurationToMenuTitle(chain.getArg(0), chain.getArg(1));
+                        return result;
+                    });
+
+            hook(setDefaultTitle)
+                    .setId(HOOK_SETTINGS_DEFAULT_MENU_TITLE_ID)
+                    .setExceptionMode(ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        Object result = chain.proceed();
+                        applyPermanentDurationToMenuTitle(chain.getArg(0), chain.getArg(1));
                         return result;
                     });
 
             log(Log.INFO, TAG, "Installed ColorOS clock-seconds Settings hook");
         } catch (Throwable error) {
             log(Log.ERROR, TAG, "Failed to install clock-seconds Settings hook", error);
+        }
+    }
+
+    private void installLauncherMemoryInfoHook(ClassLoader classLoader) {
+        try {
+            Class<?> memoryInfoManagerClass = Class.forName("fp.e", false, classLoader);
+            Method updateMemoryInfoSwitch = memoryInfoManagerClass.getDeclaredMethod("i");
+            Field memoryInfoAllowed = memoryInfoManagerClass.getField("f33271m");
+            Field memoryInfoEnabled = memoryInfoManagerClass.getField("f33262d");
+            Field contextField = memoryInfoManagerClass.getField("f33260b");
+            memoryInfoAllowed.setAccessible(true);
+
+            hook(updateMemoryInfoSwitch)
+                    .setId(HOOK_LAUNCHER_MEMORY_INFO_ID)
+                    .setExceptionMode(ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        Object result = chain.proceed();
+                        Object manager = chain.getThisObject();
+                        Context context = (Context) contextField.get(manager);
+                        memoryInfoAllowed.setBoolean(manager, true);
+                        Settings.Secure.putInt(
+                                context.getContentResolver(), MEMORY_INFO_COMPAT_SETTING, 1);
+                        boolean enabled = Settings.Secure.getInt(
+                                context.getContentResolver(), MEMORY_INFO_SETTING, 0) == 1;
+                        memoryInfoEnabled.setBoolean(manager, enabled);
+                        return result;
+                    });
+
+            log(Log.INFO, TAG, "Restored Launcher recent-task memory information availability");
+        } catch (Throwable error) {
+            log(Log.ERROR, TAG, "Failed to restore Launcher memory information", error);
+        }
+    }
+
+    private void applyPermanentDurationToMenuTitle(Object view, Object item) {
+        if (secondsMenuOptions.contains(item) && view instanceof TextView) {
+            TextView title = (TextView) view;
+            title.setText(formatPermanentDuration(title.getText()));
         }
     }
 
