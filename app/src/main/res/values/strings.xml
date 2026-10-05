@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="module_name">ColorOS 状态栏时钟显秒</string>
+    <string name="module_description">保持 ColorOS 状态栏时钟显秒，允许通过系统设置或长按时钟关闭。</string>
+</resources>
