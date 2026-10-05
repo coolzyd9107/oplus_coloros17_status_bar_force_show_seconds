@@ -51,6 +51,7 @@ public final class ClockSecondsModule extends XposedModule {
     private static final String HOOK_LAUNCHER_MEMORY_INFO_UI_ID = "launcher-memory-info-ui";
     private static final String HOOK_LAUNCHER_MEMORY_INFO_SWITCH_ID = "launcher-memory-info-switch";
     private static final String HOOK_LAUNCHER_MEMORY_INFO_CATEGORY_ID = "launcher-memory-info-category";
+    private static final String HOOK_LAUNCHER_MEMORY_INFO_VISIBILITY_ID = "launcher-memory-info-visibility";
     private static final String HOOK_SETTINGS_STATE_ID = "clock-seconds-settings-state";
     private static final String HOOK_SETTINGS_HINT_ID = "clock-seconds-settings-hint";
     private static final String HOOK_SETTINGS_ASSIGNMENT_ID = "clock-seconds-settings-assignment";
@@ -312,6 +313,8 @@ public final class ClockSecondsModule extends XposedModule {
                     "androidx.preference.Preference", false, classLoader);
             Class<?> preferenceGroupClass = Class.forName(
                     "androidx.preference.PreferenceGroup", false, classLoader);
+            Method getPreferenceKey = preferenceClass.getMethod("getKey");
+            Method setPreferenceVisible = preferenceClass.getMethod("setVisible", boolean.class);
             Class<?> lockSettingFragmentClass = Class.forName(
                     "com.oplus.quickstep.locksetting.ui.LockSettingFragment", false, classLoader);
             Method removePreference = preferenceGroupClass.getDeclaredMethod("f", preferenceClass);
@@ -332,6 +335,24 @@ public final class ClockSecondsModule extends XposedModule {
             memoryInfoCategory.setAccessible(true);
             fragmentContext.setAccessible(true);
             addPreference.setAccessible(true);
+
+            try {
+                hook(setPreferenceVisible)
+                        .setId(HOOK_LAUNCHER_MEMORY_INFO_VISIBILITY_ID)
+                        .setExceptionMode(ExceptionMode.PROTECTIVE)
+                        .intercept(chain -> {
+                            Object preference = chain.getThisObject();
+                            Object key = getPreferenceKey.invoke(preference);
+                            if (Boolean.FALSE.equals(chain.getArg(0))
+                                    && (MEMORY_INFO_SETTING.equals(key)
+                                    || MEMORY_INFO_CATEGORY_KEY.equals(key))) {
+                                return chain.proceed(new Object[]{true});
+                            }
+                            return chain.proceed();
+                        });
+            } catch (Throwable error) {
+                log(Log.ERROR, TAG, "Failed to preserve Launcher memory preference visibility", error);
+            }
 
             hook(updateMemoryInfoState)
                     .setId(HOOK_LAUNCHER_MEMORY_INFO_ID)
@@ -388,7 +409,7 @@ public final class ClockSecondsModule extends XposedModule {
                         .intercept(chain -> {
                             Object preference = chain.getArg(0);
                             if (preference != null && MEMORY_INFO_CATEGORY_KEY.equals(
-                                    preferenceClass.getMethod("getKey").invoke(preference))) {
+                                    getPreferenceKey.invoke(preference))) {
                                 return false;
                             }
                             return chain.proceed();
