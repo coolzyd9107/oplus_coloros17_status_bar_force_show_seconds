@@ -38,6 +38,8 @@ public final class ClockSecondsModule extends XposedModule {
     private static final String MEMORY_INFO_SETTING =
             "display_memory_information_recent_task";
     private static final String MEMORY_INFO_COMPAT_SETTING = "allow_memory_info_display";
+    private static final String LAUNCHER_HOOK_TIMESTAMP_SETTING =
+            "coloros_clockseconds_launcher_hook_timestamp";
     private static final String MEMORY_INFO_CATEGORY_KEY =
             "category_display_information_recent_task";
     private static final String NETWORK_SPEED_INTERVAL_SETTING =
@@ -442,6 +444,10 @@ public final class ClockSecondsModule extends XposedModule {
                                 if (getPreferenceParent.invoke(category) == null) {
                                     addPreference.invoke(getPreferenceScreen.invoke(fragment), category);
                                 }
+                            }
+                            if (context != null) {
+                                Settings.Secure.putLong(context.getContentResolver(),
+                                        LAUNCHER_HOOK_TIMESTAMP_SETTING, System.currentTimeMillis());
                             }
                             return result;
                         });
