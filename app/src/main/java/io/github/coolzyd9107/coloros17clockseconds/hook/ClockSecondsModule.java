@@ -45,6 +45,7 @@ public final class ClockSecondsModule extends XposedModule {
     private static final int DEFAULT_NETWORK_SPEED_INTERVAL_MS = 4000;
     private static final String HOOK_DEADLINE_CHECK_ID = "clock-seconds-deadline-check";
     private static final String HOOK_EXPIRY_ID = "clock-seconds-expiry";
+    private static final String HOOK_MODE_CHANGE_DEADLINE_ID = "clock-seconds-mode-change-deadline";
     private static final String HOOK_NETWORK_SPEED_INTERVAL_ID = "network-speed-refresh-interval";
     private static final String HOOK_LAUNCHER_MEMORY_INFO_ID = "launcher-memory-info-availability";
     private static final String HOOK_LAUNCHER_MEMORY_INFO_UI_ID = "launcher-memory-info-ui";
@@ -89,6 +90,8 @@ public final class ClockSecondsModule extends XposedModule {
                     controllerClass.getDeclaredMethod("isOplusFiveMinutesActive", long.class);
             Method scheduleExpiry =
                     controllerClass.getDeclaredMethod("scheduleExpiryLocked", int.class, long.class);
+            Method onUserOrModeChanged = controllerClass.getDeclaredMethod(
+                    "onUserOrModeChanged", int.class, int.class, long.class);
             Field lastAppliedMode = controllerClass.getField("lastAppliedMode");
             Class<?> networkSpeedControllerClass = Class.forName(
                     "com.oplus.systemui.statusbar.phone.netspeed.OplusNetworkSpeedControllerExImpl",
@@ -114,6 +117,21 @@ public final class ClockSecondsModule extends XposedModule {
                             return null;
                         }
                         return chain.proceed();
+                    });
+
+            hook(onUserOrModeChanged)
+                    .setId(HOOK_MODE_CHANGE_DEADLINE_ID)
+                    .setExceptionMode(ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        int mode = ((Number) chain.getArg(1)).intValue();
+                        if (mode != MODE_ENABLED) {
+                            return chain.proceed();
+                        }
+                        return chain.proceed(new Object[]{
+                                chain.getArg(0),
+                                chain.getArg(1),
+                                0L
+                        });
                     });
 
             hook(postNetworkSpeedUpdate)
@@ -297,11 +315,14 @@ public final class ClockSecondsModule extends XposedModule {
             Class<?> lockSettingFragmentClass = Class.forName(
                     "com.oplus.quickstep.locksetting.ui.LockSettingFragment", false, classLoader);
             Method removePreference = preferenceGroupClass.getDeclaredMethod("f", preferenceClass);
+            Method addPreference = preferenceGroupClass.getDeclaredMethod("b", preferenceClass);
+            Method getPreferenceParent = preferenceClass.getMethod("getParent");
             Method onCreateView = lockSettingFragmentClass.getDeclaredMethod(
                     "onCreateView",
                     Class.forName("android.view.LayoutInflater", false, classLoader),
                     Class.forName("android.view.ViewGroup", false, classLoader),
                     Class.forName("android.os.Bundle", false, classLoader));
+            Method getPreferenceScreen = lockSettingFragmentClass.getMethod("getPreferenceScreen");
             Method fragmentUpdateMemoryInfoSwitch = lockSettingFragmentClass.getDeclaredMethod(
                     "updateMemoryInfoSwitch", boolean.class);
             Field memoryInfoSwitch = lockSettingFragmentClass.getDeclaredField("mDisplayMemoryInforSwitch");
@@ -310,6 +331,7 @@ public final class ClockSecondsModule extends XposedModule {
             memoryInfoSwitch.setAccessible(true);
             memoryInfoCategory.setAccessible(true);
             fragmentContext.setAccessible(true);
+            addPreference.setAccessible(true);
 
             hook(updateMemoryInfoState)
                     .setId(HOOK_LAUNCHER_MEMORY_INFO_ID)
@@ -359,41 +381,52 @@ public final class ClockSecondsModule extends XposedModule {
                         return chain.proceed(new Object[]{enabled});
                     });
 
-            hook(removePreference)
-                    .setId(HOOK_LAUNCHER_MEMORY_INFO_CATEGORY_ID)
-                    .setExceptionMode(ExceptionMode.PROTECTIVE)
-                    .intercept(chain -> {
-                        Object preference = chain.getArg(0);
-                        if (preference != null && MEMORY_INFO_CATEGORY_KEY.equals(
-                                preferenceClass.getMethod("getKey").invoke(preference))) {
-                            return false;
-                        }
-                        return chain.proceed();
-                    });
+            try {
+                hook(removePreference)
+                        .setId(HOOK_LAUNCHER_MEMORY_INFO_CATEGORY_ID)
+                        .setExceptionMode(ExceptionMode.PROTECTIVE)
+                        .intercept(chain -> {
+                            Object preference = chain.getArg(0);
+                            if (preference != null && MEMORY_INFO_CATEGORY_KEY.equals(
+                                    preferenceClass.getMethod("getKey").invoke(preference))) {
+                                return false;
+                            }
+                            return chain.proceed();
+                        });
+            } catch (Throwable error) {
+                log(Log.ERROR, TAG, "Failed to keep Launcher memory settings category", error);
+            }
 
-            hook(onCreateView)
-                    .setId(HOOK_LAUNCHER_MEMORY_INFO_UI_ID)
-                    .setExceptionMode(ExceptionMode.PROTECTIVE)
-                    .intercept(chain -> {
-                        Object result = chain.proceed();
-                        Object fragment = chain.getThisObject();
-                        Object switchPreference = memoryInfoSwitch.get(fragment);
-                        Object category = memoryInfoCategory.get(fragment);
-                        Context context = (Context) fragmentContext.get(fragment);
-                        boolean enabled = context != null && Settings.Secure.getInt(
-                                context.getContentResolver(), MEMORY_INFO_SETTING, 0) == 1;
-                        if (switchPreference != null) {
-                            switchPreference.getClass().getMethod("setVisible", boolean.class)
-                                    .invoke(switchPreference, true);
-                            switchPreference.getClass().getMethod("setChecked", boolean.class)
-                                    .invoke(switchPreference, enabled);
-                        }
-                        if (category != null) {
-                            category.getClass().getMethod("setVisible", boolean.class)
-                                    .invoke(category, true);
-                        }
-                        return result;
-                    });
+            try {
+                hook(onCreateView)
+                        .setId(HOOK_LAUNCHER_MEMORY_INFO_UI_ID)
+                        .setExceptionMode(ExceptionMode.PROTECTIVE)
+                        .intercept(chain -> {
+                            Object result = chain.proceed();
+                            Object fragment = chain.getThisObject();
+                            Object switchPreference = memoryInfoSwitch.get(fragment);
+                            Object category = memoryInfoCategory.get(fragment);
+                            Context context = (Context) fragmentContext.get(fragment);
+                            boolean enabled = context != null && Settings.Secure.getInt(
+                                    context.getContentResolver(), MEMORY_INFO_SETTING, 0) == 1;
+                            if (switchPreference != null) {
+                                switchPreference.getClass().getMethod("setVisible", boolean.class)
+                                        .invoke(switchPreference, true);
+                                switchPreference.getClass().getMethod("setChecked", boolean.class)
+                                        .invoke(switchPreference, enabled);
+                            }
+                            if (category != null) {
+                                category.getClass().getMethod("setVisible", boolean.class)
+                                        .invoke(category, true);
+                                if (getPreferenceParent.invoke(category) == null) {
+                                    addPreference.invoke(getPreferenceScreen.invoke(fragment), category);
+                                }
+                            }
+                            return result;
+                        });
+            } catch (Throwable error) {
+                log(Log.ERROR, TAG, "Failed to restore Launcher memory setting UI", error);
+            }
 
             log(Log.INFO, TAG, "Restored Launcher recent-task memory information availability");
         } catch (Throwable error) {

@@ -13,6 +13,10 @@ import android.widget.TextView;
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
 
 import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.button.MaterialButton;
@@ -57,12 +61,21 @@ public final class ModuleSettingsActivity extends AppCompatActivity {
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
         int storedInterval = Settings.Secure.getInt(
                 getContentResolver(), NETWORK_SPEED_INTERVAL_KEY, DEFAULT_INTERVAL_MS);
         selectedIntervalMs = isSupportedInterval(storedInterval)
                 ? storedInterval
                 : DEFAULT_INTERVAL_MS;
-        setContentView(createContent());
+        View page = createContent();
+        setContentView(page);
+        ViewCompat.setOnApplyWindowInsetsListener(page, (view, windowInsets) -> {
+            Insets systemBars = windowInsets.getInsets(
+                    WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
+            view.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom);
+            return windowInsets;
+        });
+        ViewCompat.requestApplyInsets(page);
     }
 
     @Override
