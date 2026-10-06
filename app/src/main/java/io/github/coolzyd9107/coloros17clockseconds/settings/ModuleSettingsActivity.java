@@ -49,7 +49,7 @@ public final class ModuleSettingsActivity extends AppCompatActivity {
     private static final String RESTART_COMMAND =
             "for pkg in com.android.systemui com.android.settings com.android.launcher; do "
                     + "for pid in $(pidof \"$pkg\" 2>/dev/null); do "
-                    + "kill -TERM \"$pid\" 2>/dev/null || true; "
+                    + "kill -9 \"$pid\" 2>/dev/null || true; "
                     + "done; done";
 
     private final ExecutorService rootExecutor = Executors.newSingleThreadExecutor();
