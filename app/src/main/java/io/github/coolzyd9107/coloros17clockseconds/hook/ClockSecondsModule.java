@@ -37,9 +37,6 @@ public final class ClockSecondsModule extends XposedModule {
     private static final String MODE_SETTING = "oplus_status_bar_clock_seconds_mode";
     private static final String MEMORY_INFO_SETTING =
             "display_memory_information_recent_task";
-    private static final String MEMORY_INFO_COMPAT_SETTING = "allow_memory_info_display";
-    private static final String LAUNCHER_HOOK_TIMESTAMP_SETTING =
-            "coloros_clockseconds_launcher_hook_timestamp";
     private static final String MEMORY_INFO_CATEGORY_KEY =
             "category_display_information_recent_task";
     private static final String NETWORK_SPEED_INTERVAL_SETTING =
@@ -52,6 +49,7 @@ public final class ClockSecondsModule extends XposedModule {
     private static final String HOOK_LAUNCHER_MEMORY_INFO_ID = "launcher-memory-info-availability";
     private static final String HOOK_LAUNCHER_MEMORY_INFO_UI_ID = "launcher-memory-info-ui";
     private static final String HOOK_LAUNCHER_MEMORY_INFO_SWITCH_ID = "launcher-memory-info-switch";
+    private static final String HOOK_LAUNCHER_MEMORY_INFO_CHANGE_ID = "launcher-memory-info-change";
     private static final String HOOK_LAUNCHER_MEMORY_INFO_CATEGORY_ID = "launcher-memory-info-category";
     private static final String HOOK_LAUNCHER_MEMORY_INFO_VISIBILITY_ID = "launcher-memory-info-visibility";
     private static final String HOOK_SETTINGS_STATE_ID = "clock-seconds-settings-state";
@@ -72,6 +70,8 @@ public final class ClockSecondsModule extends XposedModule {
             "模块运行中：开启显秒后不会在 5 分钟后自动关闭；仍可通过本设置或长按时钟关闭。";
     private final Set<Object> secondsMenuOptions =
             Collections.newSetFromMap(new WeakHashMap<>());
+    private final Set<Object> memoryInfoPreferences =
+            Collections.newSetFromMap(new WeakHashMap<>());
 
     @Override
     public void onPackageLoaded(PackageLoadedParam param) {
@@ -81,7 +81,9 @@ public final class ClockSecondsModule extends XposedModule {
         } else if (SETTINGS_PACKAGE.equals(packageName)) {
             installSettingsStateHook(param.getDefaultClassLoader());
         } else if (LAUNCHER_PACKAGE.equals(packageName)) {
-            installLauncherMemoryInfoHook(param.getDefaultClassLoader());
+            ClassLoader classLoader = param.getDefaultClassLoader();
+            installLauncherMemoryInfoUiHooks(classLoader);
+            installLauncherMemoryInfoStateHooks(classLoader);
         }
     }
 
@@ -300,121 +302,149 @@ public final class ClockSecondsModule extends XposedModule {
         }
     }
 
-    private void installLauncherMemoryInfoHook(ClassLoader classLoader) {
-        try {
-            Class<?> memoryInfoManagerClass = Class.forName("fp.e", false, classLoader);
-            Method updateMemoryInfoState = memoryInfoManagerClass.getDeclaredMethod("i");
-            Method isMemoryInfoAllowed = memoryInfoManagerClass.getDeclaredMethod("g");
-            Method isMemoryInfoEnabled = memoryInfoManagerClass.getDeclaredMethod("h");
-            Method getMemoryInfoManager = memoryInfoManagerClass.getDeclaredMethod("a", Context.class);
-            Field memoryInfoAllowed = memoryInfoManagerClass.getField("f33271m");
-            Field memoryInfoEnabled = memoryInfoManagerClass.getField("f33262d");
-            Field contextField = memoryInfoManagerClass.getField("f33260b");
-            memoryInfoAllowed.setAccessible(true);
-            getMemoryInfoManager.setAccessible(true);
+    private void installLauncherMemoryInfoUiHooks(ClassLoader classLoader) {
+        installLauncherMemoryPreferenceVisibilityHook(classLoader);
+        installLauncherMemoryCategoryHook(classLoader);
+        installLauncherMemoryFragmentUiHook(classLoader);
+        installLauncherMemorySwitchStateHook(classLoader);
+    }
 
+    private void installLauncherMemoryPreferenceVisibilityHook(ClassLoader classLoader) {
+        try {
+            Class<?> preferenceClass = Class.forName(
+                    "androidx.preference.Preference", false, classLoader);
+            Method getPreferenceKey = preferenceClass.getMethod("getKey");
+            Method setPreferenceVisible = preferenceClass.getMethod("setVisible", boolean.class);
+
+            hook(setPreferenceVisible)
+                    .setId(HOOK_LAUNCHER_MEMORY_INFO_VISIBILITY_ID)
+                    .setExceptionMode(ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        Object preference = chain.getThisObject();
+                        Object key = getPreferenceKey.invoke(preference);
+                        if (Boolean.FALSE.equals(chain.getArg(0))
+                                && (MEMORY_INFO_SETTING.equals(key)
+                                || MEMORY_INFO_CATEGORY_KEY.equals(key))) {
+                            return chain.proceed(new Object[]{true});
+                        }
+                        return chain.proceed();
+                    });
+            log(Log.INFO, TAG, "Installed Launcher memory preference visibility hook");
+        } catch (Throwable error) {
+            log(Log.ERROR, TAG, "Failed to install Launcher memory preference visibility hook", error);
+        }
+    }
+
+    private void installLauncherMemoryCategoryHook(ClassLoader classLoader) {
+        try {
             Class<?> preferenceClass = Class.forName(
                     "androidx.preference.Preference", false, classLoader);
             Class<?> preferenceGroupClass = Class.forName(
                     "androidx.preference.PreferenceGroup", false, classLoader);
             Method getPreferenceKey = preferenceClass.getMethod("getKey");
-            Method setPreferenceVisible = preferenceClass.getMethod("setVisible", boolean.class);
+            Method removePreference = preferenceGroupClass.getDeclaredMethod("f", preferenceClass);
+            removePreference.setAccessible(true);
+
+            hook(removePreference)
+                    .setId(HOOK_LAUNCHER_MEMORY_INFO_CATEGORY_ID)
+                    .setExceptionMode(ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        Object preference = chain.getArg(0);
+                        if (preference != null && MEMORY_INFO_CATEGORY_KEY.equals(
+                                getPreferenceKey.invoke(preference))) {
+                            Class<?> returnType = removePreference.getReturnType();
+                            return returnType == boolean.class || returnType == Boolean.class
+                                    ? false
+                                    : null;
+                        }
+                        return chain.proceed();
+                    });
+            log(Log.INFO, TAG, "Installed Launcher memory category hook");
+        } catch (Throwable error) {
+            log(Log.ERROR, TAG, "Failed to install Launcher memory category hook", error);
+        }
+    }
+
+    private void installLauncherMemoryFragmentUiHook(ClassLoader classLoader) {
+        try {
+            Class<?> preferenceClass = Class.forName(
+                    "androidx.preference.Preference", false, classLoader);
+            Class<?> preferenceGroupClass = Class.forName(
+                    "androidx.preference.PreferenceGroup", false, classLoader);
             Class<?> lockSettingFragmentClass = Class.forName(
                     "com.oplus.quickstep.locksetting.ui.LockSettingFragment", false, classLoader);
-            Class<?> lockSettingActivityClass = Class.forName(
-                    "com.oplus.quickstep.locksetting.ui.LockSettingActivity", false, classLoader);
-            Class<?> clearAllPanelClass = Class.forName(
-                    "com.oplus.quickstep.views.OplusClearAllPanelView", false, classLoader);
-            Method updateMemoryPanel = clearAllPanelClass.getDeclaredMethod("B", boolean.class);
-            Method removePreference = preferenceGroupClass.getDeclaredMethod("f", preferenceClass);
-            Method addPreference = preferenceGroupClass.getDeclaredMethod("b", preferenceClass);
-            Method getPreferenceParent = preferenceClass.getMethod("getParent");
             Method onCreateView = lockSettingFragmentClass.getDeclaredMethod(
                     "onCreateView",
                     Class.forName("android.view.LayoutInflater", false, classLoader),
                     Class.forName("android.view.ViewGroup", false, classLoader),
                     Class.forName("android.os.Bundle", false, classLoader));
-            Method lockSettingActivityOnCreate = lockSettingActivityClass.getDeclaredMethod(
-                    "onCreate", Class.forName("android.os.Bundle", false, classLoader));
             Method getPreferenceScreen = lockSettingFragmentClass.getMethod("getPreferenceScreen");
-            Method fragmentUpdateMemoryInfoSwitch = lockSettingFragmentClass.getDeclaredMethod(
-                    "updateMemoryInfoSwitch", boolean.class);
-            Field memoryInfoSwitch = lockSettingFragmentClass.getDeclaredField("mDisplayMemoryInforSwitch");
-            Field memoryInfoCategory = lockSettingFragmentClass.getDeclaredField("mDisplayInformationCategory");
+            Method setPreferenceVisible = preferenceClass.getMethod("setVisible", boolean.class);
+            Method getPreferenceParent = preferenceClass.getMethod("getParent");
+            Method addPreference = preferenceGroupClass.getDeclaredMethod("b", preferenceClass);
+            Field memoryInfoSwitch = lockSettingFragmentClass.getDeclaredField(
+                    "mDisplayMemoryInforSwitch");
+            Field memoryInfoCategory = lockSettingFragmentClass.getDeclaredField(
+                    "mDisplayInformationCategory");
             Field fragmentContext = lockSettingFragmentClass.getDeclaredField("mContext");
             memoryInfoSwitch.setAccessible(true);
             memoryInfoCategory.setAccessible(true);
             fragmentContext.setAccessible(true);
             addPreference.setAccessible(true);
 
-            try {
-                hook(setPreferenceVisible)
-                        .setId(HOOK_LAUNCHER_MEMORY_INFO_VISIBILITY_ID)
-                        .setExceptionMode(ExceptionMode.PROTECTIVE)
-                        .intercept(chain -> {
-                            Object preference = chain.getThisObject();
-                            Object key = getPreferenceKey.invoke(preference);
-                            if (Boolean.FALSE.equals(chain.getArg(0))
-                                    && (MEMORY_INFO_SETTING.equals(key)
-                                    || MEMORY_INFO_CATEGORY_KEY.equals(key))) {
-                                return chain.proceed(new Object[]{true});
-                            }
-                            return chain.proceed();
-                        });
-            } catch (Throwable error) {
-                log(Log.ERROR, TAG, "Failed to preserve Launcher memory preference visibility", error);
-            }
-
-            hook(updateMemoryInfoState)
-                    .setId(HOOK_LAUNCHER_MEMORY_INFO_ID)
+            hook(onCreateView)
+                    .setId(HOOK_LAUNCHER_MEMORY_INFO_UI_ID)
                     .setExceptionMode(ExceptionMode.PROTECTIVE)
                     .intercept(chain -> {
                         Object result = chain.proceed();
-                        Object manager = chain.getThisObject();
-                        Context context = (Context) contextField.get(manager);
+                        Object fragment = chain.getThisObject();
+                        Context context = (Context) fragmentContext.get(fragment);
+                        Object switchPreference = null;
+
                         try {
-                            memoryInfoAllowed.setBoolean(manager, true);
-                        } catch (IllegalAccessException error) {
-                            log(Log.WARN, TAG, "Could not update Launcher memory capability field", error);
+                            switchPreference = memoryInfoSwitch.get(fragment);
+                            if (switchPreference != null) {
+                                // Mirror the saved user choice; hook setup does not enable it.
+                                boolean enabled = isMemoryInfoEnabled(context);
+                                memoryInfoPreferences.add(switchPreference);
+                                setPreferenceVisible.invoke(switchPreference, true);
+                                switchPreference.getClass()
+                                        .getMethod("setChecked", boolean.class)
+                                        .invoke(switchPreference, enabled);
+                            }
+                        } catch (Throwable error) {
+                            log(Log.ERROR, TAG, "Failed to restore Launcher memory switch", error);
                         }
-                        Settings.Secure.putInt(
-                                context.getContentResolver(), MEMORY_INFO_COMPAT_SETTING, 1);
-                        boolean enabled = Settings.Secure.getInt(
-                                context.getContentResolver(), MEMORY_INFO_SETTING, 0) == 1;
-                        memoryInfoEnabled.setBoolean(manager, enabled);
+
+                        try {
+                            Object category = memoryInfoCategory.get(fragment);
+                            if (category != null) {
+                                setPreferenceVisible.invoke(category, true);
+                                if (getPreferenceParent.invoke(category) == null) {
+                                    Object preferenceScreen = getPreferenceScreen.invoke(fragment);
+                                    addPreference.invoke(preferenceScreen, category);
+                                }
+                            }
+                        } catch (Throwable error) {
+                            log(Log.ERROR, TAG, "Failed to restore Launcher memory category", error);
+                        }
+
                         return result;
                     });
+            log(Log.INFO, TAG, "Installed Launcher memory Fragment UI hook");
+        } catch (Throwable error) {
+            log(Log.ERROR, TAG, "Failed to install Launcher memory Fragment UI hook", error);
+        }
+    }
 
-            hook(isMemoryInfoAllowed)
-                    .setId(HOOK_LAUNCHER_MEMORY_INFO_ID + "-capability")
-                    .setExceptionMode(ExceptionMode.PROTECTIVE)
-                    .intercept(chain -> true);
-
-            hook(isMemoryInfoEnabled)
-                    .setId(HOOK_LAUNCHER_MEMORY_INFO_ID + "-enabled")
-                    .setExceptionMode(ExceptionMode.PROTECTIVE)
-                    .intercept(chain -> {
-                        Object manager = chain.getThisObject();
-                        Context context = (Context) contextField.get(manager);
-                        return Settings.Secure.getInt(
-                                context.getContentResolver(), MEMORY_INFO_SETTING, 0) == 1;
-                    });
-
-            try {
-                hook(updateMemoryPanel)
-                        .setId(HOOK_LAUNCHER_MEMORY_INFO_ID + "-panel")
-                        .setExceptionMode(ExceptionMode.PROTECTIVE)
-                        .intercept(chain -> {
-                            Context context = ((android.view.View) chain.getThisObject()).getContext();
-                            Object manager = getMemoryInfoManager.invoke(null, context);
-                            boolean enabled = Settings.Secure.getInt(
-                                    context.getContentResolver(), MEMORY_INFO_SETTING, 0) == 1;
-                            memoryInfoEnabled.setBoolean(manager, enabled);
-                            return chain.proceed();
-                        });
-            } catch (Throwable error) {
-                log(Log.ERROR, TAG, "Failed to hook Launcher recent-task memory panel", error);
-            }
+    private void installLauncherMemorySwitchStateHook(ClassLoader classLoader) {
+        try {
+            Class<?> lockSettingFragmentClass = Class.forName(
+                    "com.oplus.quickstep.locksetting.ui.LockSettingFragment", false, classLoader);
+            Method fragmentUpdateMemoryInfoSwitch = lockSettingFragmentClass.getDeclaredMethod(
+                    "updateMemoryInfoSwitch", boolean.class);
+            Field fragmentContext = lockSettingFragmentClass.getDeclaredField("mContext");
+            fragmentContext.setAccessible(true);
 
             hook(fragmentUpdateMemoryInfoSwitch)
                     .setId(HOOK_LAUNCHER_MEMORY_INFO_SWITCH_ID)
@@ -424,77 +454,148 @@ public final class ClockSecondsModule extends XposedModule {
                         if (context == null) {
                             return chain.proceed();
                         }
-                        boolean enabled = Settings.Secure.getInt(
-                                context.getContentResolver(), MEMORY_INFO_SETTING, 0) == 1;
-                        return chain.proceed(new Object[]{enabled});
+                        return chain.proceed(new Object[]{isMemoryInfoEnabled(context)});
+                    });
+            log(Log.INFO, TAG, "Installed Launcher memory switch state hook");
+        } catch (Throwable error) {
+            log(Log.ERROR, TAG, "Failed to install Launcher memory switch state hook", error);
+        }
+    }
+
+    private void installLauncherMemoryInfoStateHooks(ClassLoader classLoader) {
+        try {
+            Class<?> memoryInfoManagerClass = Class.forName("fp.e", false, classLoader);
+            Method updateMemoryInfoState = memoryInfoManagerClass.getDeclaredMethod("i");
+            Method isMemoryInfoAllowed = memoryInfoManagerClass.getDeclaredMethod("g");
+            Method isMemoryInfoEnabledMethod = memoryInfoManagerClass.getDeclaredMethod("h");
+            Method getMemoryInfoManager = memoryInfoManagerClass.getDeclaredMethod("a", Context.class);
+            Field memoryInfoCapability = memoryInfoManagerClass.getField("m");
+            Field memoryInfoEnabled = memoryInfoManagerClass.getField("d");
+            Field contextField = memoryInfoManagerClass.getField("b");
+            memoryInfoCapability.setAccessible(true);
+            memoryInfoEnabled.setAccessible(true);
+            contextField.setAccessible(true);
+            getMemoryInfoManager.setAccessible(true);
+
+            hook(updateMemoryInfoState)
+                    .setId(HOOK_LAUNCHER_MEMORY_INFO_ID)
+                    .setExceptionMode(ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        Object result = chain.proceed();
+                        Object manager = chain.getThisObject();
+                        Context context = (Context) contextField.get(manager);
+                        if (context != null) {
+                            memoryInfoCapability.setBoolean(manager, true);
+                            memoryInfoEnabled.setBoolean(manager, isMemoryInfoEnabled(context));
+                        }
+                        return result;
+                    });
+
+            // Availability is independent of the user's persisted enabled preference.
+            hook(isMemoryInfoAllowed)
+                    .setId(HOOK_LAUNCHER_MEMORY_INFO_ID + "-capability")
+                    .setExceptionMode(ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> true);
+
+            hook(isMemoryInfoEnabledMethod)
+                    .setId(HOOK_LAUNCHER_MEMORY_INFO_ID + "-enabled")
+                    .setExceptionMode(ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        Object manager = chain.getThisObject();
+                        Context context = (Context) contextField.get(manager);
+                        return isMemoryInfoEnabled(context);
                     });
 
             try {
-                hook(removePreference)
-                        .setId(HOOK_LAUNCHER_MEMORY_INFO_CATEGORY_ID)
+                Class<?> clearAllPanelClass = Class.forName(
+                        "com.oplus.quickstep.views.OplusClearAllPanelView", false, classLoader);
+                Method updateMemoryPanel = clearAllPanelClass.getDeclaredMethod("B", boolean.class);
+                hook(updateMemoryPanel)
+                        .setId(HOOK_LAUNCHER_MEMORY_INFO_ID + "-panel")
                         .setExceptionMode(ExceptionMode.PROTECTIVE)
                         .intercept(chain -> {
-                            Object preference = chain.getArg(0);
-                            if (preference != null && MEMORY_INFO_CATEGORY_KEY.equals(
-                                    getPreferenceKey.invoke(preference))) {
-                                return false;
-                            }
-                            return chain.proceed();
+                            Context context = ((android.view.View) chain.getThisObject()).getContext();
+                            Object manager = getMemoryInfoManager.invoke(null, context);
+                            boolean enabled = isMemoryInfoEnabled(context);
+                            memoryInfoCapability.setBoolean(manager, true);
+                            memoryInfoEnabled.setBoolean(manager, enabled);
+                            return chain.proceed(new Object[]{enabled});
                         });
             } catch (Throwable error) {
-                log(Log.ERROR, TAG, "Failed to keep Launcher memory settings category", error);
+                log(Log.ERROR, TAG, "Failed to install Launcher recent-task memory panel hook", error);
             }
 
             try {
-                hook(onCreateView)
-                        .setId(HOOK_LAUNCHER_MEMORY_INFO_UI_ID)
+                Class<?> preferenceClass = Class.forName(
+                        "androidx.preference.Preference", false, classLoader);
+                Method getPreferenceKey = preferenceClass.getMethod("getKey");
+                Method callChangeListener = preferenceClass.getDeclaredMethod(
+                        "callChangeListener", Object.class);
+                Method getPreferenceContext = preferenceClass.getMethod("getContext");
+                callChangeListener.setAccessible(true);
+                hook(callChangeListener)
+                        .setId(HOOK_LAUNCHER_MEMORY_INFO_CHANGE_ID)
                         .setExceptionMode(ExceptionMode.PROTECTIVE)
                         .intercept(chain -> {
+                            Object preference = chain.getThisObject();
+                            Object key = getPreferenceKey.invoke(preference);
+                            if (!MEMORY_INFO_SETTING.equals(key)
+                                    && !memoryInfoPreferences.contains(preference)) {
+                                return chain.proceed();
+                            }
+
                             Object result = chain.proceed();
-                            Object fragment = chain.getThisObject();
-                            Object switchPreference = memoryInfoSwitch.get(fragment);
-                            Object category = memoryInfoCategory.get(fragment);
-                            Context context = (Context) fragmentContext.get(fragment);
-                            boolean enabled = context != null && Settings.Secure.getInt(
-                                    context.getContentResolver(), MEMORY_INFO_SETTING, 0) == 1;
-                            if (switchPreference != null) {
-                                switchPreference.getClass().getMethod("setVisible", boolean.class)
-                                        .invoke(switchPreference, true);
-                                switchPreference.getClass().getMethod("setChecked", boolean.class)
-                                        .invoke(switchPreference, enabled);
-                            }
-                            if (category != null) {
-                                category.getClass().getMethod("setVisible", boolean.class)
-                                        .invoke(category, true);
-                                if (getPreferenceParent.invoke(category) == null) {
-                                    addPreference.invoke(getPreferenceScreen.invoke(fragment), category);
-                                }
-                            }
-                            if (context != null) {
-                                Settings.Secure.putLong(context.getContentResolver(),
-                                        LAUNCHER_HOOK_TIMESTAMP_SETTING, System.currentTimeMillis());
+                            Object value = chain.getArg(0);
+                            if (value instanceof Boolean) {
+                                Context context = (Context) getPreferenceContext.invoke(preference);
+                                writeMemoryInfoState(
+                                        context,
+                                        (Boolean) value,
+                                        getMemoryInfoManager,
+                                        memoryInfoCapability,
+                                        memoryInfoEnabled,
+                                        updateMemoryInfoState);
+                                return true;
                             }
                             return result;
                         });
             } catch (Throwable error) {
-                log(Log.ERROR, TAG, "Failed to restore Launcher memory setting UI", error);
+                log(Log.ERROR, TAG, "Failed to install Launcher memory preference change hook", error);
             }
 
-            hook(lockSettingActivityOnCreate)
-                    .setId(HOOK_LAUNCHER_MEMORY_INFO_UI_ID + "-activity")
-                    .setExceptionMode(ExceptionMode.PROTECTIVE)
-                    .intercept(chain -> {
-                        Object result = chain.proceed();
-                        Context context = (Context) chain.getThisObject();
-                        Settings.Secure.putLong(context.getContentResolver(),
-                                LAUNCHER_HOOK_TIMESTAMP_SETTING, System.currentTimeMillis());
-                        return result;
-                    });
-
-            log(Log.INFO, TAG, "Restored Launcher recent-task memory information availability");
+            log(Log.INFO, TAG, "Installed Launcher memory state hooks");
         } catch (Throwable error) {
-            log(Log.ERROR, TAG, "Failed to restore Launcher memory information", error);
+            log(Log.ERROR, TAG, "Failed to install Launcher memory state hooks", error);
         }
+    }
+
+    private void writeMemoryInfoState(
+            Context context,
+            boolean enabled,
+            Method getMemoryInfoManager,
+            Field memoryInfoCapability,
+            Field memoryInfoEnabled,
+            Method updateMemoryInfoState) {
+        if (context == null) {
+            return;
+        }
+
+        try {
+            ContentResolver resolver = context.getContentResolver();
+            Settings.Secure.putInt(resolver, MEMORY_INFO_SETTING, enabled ? 1 : 0);
+
+            Object manager = getMemoryInfoManager.invoke(null, context);
+            memoryInfoCapability.setBoolean(manager, true);
+            memoryInfoEnabled.setBoolean(manager, enabled);
+            updateMemoryInfoState.invoke(manager);
+        } catch (Throwable error) {
+            log(Log.ERROR, TAG, "Failed to apply Launcher memory information state", error);
+        }
+    }
+
+    private static boolean isMemoryInfoEnabled(Context context) {
+        return context != null && Settings.Secure.getInt(
+                context.getContentResolver(), MEMORY_INFO_SETTING, 0) == 1;
     }
 
     private void applyPermanentDurationToMenuTitle(Object view, Object item) {

@@ -6,8 +6,6 @@
     <string name="scope_settings">设置</string>
     <string name="scope_launcher">桌面与最近任务</string>
     <string name="interval_saved">刷新间隔已保存</string>
-    <string name="launcher_hook_ready">Launcher hook 最近已执行</string>
-    <string name="launcher_hook_missing">未检测到 Launcher hook。请在 LSPosed 启用 Launcher 作用域，并重新打开最近任务管理。</string>
     <string name="settings_title">状态栏工具</string>
     <string name="restart_section_title">作用域进程</string>
     <string name="restart_section_summary">结束作用域进程但不设置 stopped 状态；系统组件自动重建，其他应用在下次启动时重建。</string>

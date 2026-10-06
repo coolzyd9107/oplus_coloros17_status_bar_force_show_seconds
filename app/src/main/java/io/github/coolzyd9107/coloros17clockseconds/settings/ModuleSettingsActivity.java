@@ -36,8 +36,6 @@ import io.github.coolzyd9107.coloros17clockseconds.R;
 public final class ModuleSettingsActivity extends AppCompatActivity {
     private static final String NETWORK_SPEED_INTERVAL_KEY =
             "coloros_status_bar_network_speed_refresh_interval_ms";
-    private static final String LAUNCHER_HOOK_TIMESTAMP_KEY =
-            "coloros_clockseconds_launcher_hook_timestamp";
     private static final int DEFAULT_INTERVAL_MS = 4000;
     private static final int[] INTERVALS_MS = {500, 1000, 2000, 3000, 4000, 5000};
     private static final int[] INTERVAL_LABELS = {
@@ -71,7 +69,6 @@ public final class ModuleSettingsActivity extends AppCompatActivity {
                 : DEFAULT_INTERVAL_MS;
         View page = createContent();
         setContentView(page);
-        refreshLauncherHookStatus();
         ViewCompat.setOnApplyWindowInsetsListener(page, (view, windowInsets) -> {
             Insets systemBars = windowInsets.getInsets(
                     WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
@@ -202,14 +199,6 @@ public final class ModuleSettingsActivity extends AppCompatActivity {
         addScopeRow(body, R.string.scope_settings, "com.android.settings");
         addDivider(body);
         addScopeRow(body, R.string.scope_launcher, "com.android.launcher");
-        TextView launcherHookStatus = textView(R.string.launcher_hook_missing,
-                com.google.android.material.R.style.TextAppearance_Material3_BodySmall);
-        launcherHookStatus.setTag("launcher-hook-status");
-        launcherHookStatus.setTextColor(MaterialColors.getColor(launcherHookStatus,
-                com.google.android.material.R.attr.colorOnSurfaceVariant));
-        LinearLayout.LayoutParams hookStatusParams = wrapParams();
-        hookStatusParams.topMargin = dp(8);
-        body.addView(launcherHookStatus, hookStatusParams);
 
         MaterialButton restartButton = new MaterialButton(this);
         restartButton.setText(R.string.restart_scoped_apps);
@@ -330,24 +319,6 @@ public final class ModuleSettingsActivity extends AppCompatActivity {
                 chip.setChecked(true);
                 return;
             }
-        }
-    }
-
-    private void refreshLauncherHookStatus() {
-        TextView status = rootView.findViewWithTag("launcher-hook-status");
-        if (status == null) {
-            return;
-        }
-        try {
-            long lastSeen = Settings.Secure.getLong(
-                    getContentResolver(), LAUNCHER_HOOK_TIMESTAMP_KEY, 0L);
-            boolean active = lastSeen > 0L
-                    && System.currentTimeMillis() - lastSeen < 600000L;
-            status.setText(active
-                    ? R.string.launcher_hook_ready
-                    : R.string.launcher_hook_missing);
-        } catch (SecurityException ignored) {
-            status.setText(R.string.launcher_hook_missing);
         }
     }
 
